@@ -264,6 +264,49 @@ def download_audio(url: str, job_dir: Path, on_progress=None) -> Path:
     return _biggest(job_dir, "audio_src")
 
 
+def download_music(url: str, job_dir: Path) -> Path:
+    """Download background music (phonk, etc.) to mix into clips."""
+    job_dir.mkdir(parents=True, exist_ok=True)
+    with _youtube_guard(url), _ydl({"format": "ba[ext=m4a]/ba/worst", "outtmpl": str(job_dir / "phonk.%(ext)s")}) as ydl:
+        ydl.download([url])
+    return _biggest(job_dir, "phonk")
+
+
+def find_music_best_part(music_path: Path, clip_dur: float = 30.0) -> float:
+    """Finds the timestamp (seconds) of the best part (peak energy / beat drop) of a music track,
+    avoiding quiet intros."""
+    try:
+        music_path = Path(music_path).resolve()
+        if not music_path.is_file():
+            return 0.0
+        wav = music_path.parent / f"{music_path.stem}_analysis.wav"
+        extract_audio(music_path, wav)
+        audio = load_audio(wav)
+        wav.unlink(missing_ok=True)
+        if len(audio) < 16000 * 5:
+            return 0.0
+        db = loudness_per_second(audio)
+        total_s = len(db)
+        if total_s <= 15:
+            return 0.0
+
+        w = min(total_s, max(15, min(45, int(clip_dur))))
+        weights = np.ones(w) / w
+        smooth = np.convolve(db, weights, mode="valid")
+        diff = np.diff(db)
+
+        scores = np.zeros(len(smooth), dtype=np.float32)
+        for i in range(len(smooth)):
+            jump = max(0.0, float(np.max(diff[max(0, i - 2):min(len(diff), i + 3)]))) if i < len(diff) else 0.0
+            intro_penalty = -3.5 if i < 8 and total_s > 25 else (-1.5 if i < 15 and total_s > 45 else 0.0)
+            scores[i] = smooth[i] + min(4.0, jump * 0.7) + intro_penalty
+
+        best_sec = int(np.argmax(scores))
+        return float(max(0, best_sec))
+    except Exception:
+        return 0.0
+
+
 def download(url: str, job_dir: Path, height=720) -> Path:
     """The whole video. Used for shorter videos, where this is quicker than fetching pieces."""
     with _youtube_guard(url), _ydl({"format": _video_format(height), "merge_output_format": "mp4",

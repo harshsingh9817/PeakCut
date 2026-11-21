@@ -110,7 +110,7 @@ on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first f
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
             "range_start": None, "range_end": None, "captions": True, "hook_text": "", "description_text": "",
-            "lang": "en"}   # lang: the language spoken
+            "lang": "en", "phonk_url": "", "music_volume": 0.10}   # lang: the language spoken
 
 
 LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
@@ -124,6 +124,15 @@ def clean_options(options) -> dict:
             if not isinstance(v, bool):
                 raise ValueError("Captions must be on or off.")
             out[k] = v
+            continue
+        if k == "phonk_url":
+            out[k] = str(v or "").strip()[:500]
+            continue
+        if k == "music_volume":
+            try:
+                out[k] = max(0.02, min(0.50, float(v)))
+            except (ValueError, TypeError):
+                out[k] = 0.10
             continue
         if k in ("hook_text", "description_text"):     # kept even when empty: it clears the creator's own text for this video
             out[k] = creators.clean_hook(v) if k == "hook_text" else creators.clean_description(v)
@@ -464,7 +473,20 @@ def render_one(job, clip, words):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
-        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
+        music = job.get("phonk_path") or clip.get("phonk_path")
+        if not music:
+            for ext in ("m4a", "mp3", "wav", "webm", "opus"):
+                cand = d / f"phonk.{ext}"
+                if cand.is_file():
+                    music = str(cand.resolve())
+                    break
+        music_start = float(job.get("phonk_start") or clip.get("phonk_start") or 0.0)
+        if music and not music_start:
+            music_start = media.find_music_best_part(Path(music))
+            _set(job, phonk_start=music_start)
+        music_vol = float(job.get("options", {}).get("music_volume") or 0.10)
+        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"],
+                                music=music, music_start=music_start, music_volume=music_vol)
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
         post = {k: clip[k] for k in ("title", "description", "hashtags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")
@@ -706,6 +728,20 @@ def _run_job(job):
     hi = min(len(audio), int(o["range_end"] * 16000)) if o["range_end"] else len(audio)
     span = (hi - lo) / 16000
     db = media.loudness_per_second(audio[lo:hi])
+
+    if o.get("phonk_url") and not job.get("phonk_path"):
+        for attempt in range(3):
+            try:
+                _set(job, stage="Downloading Phonk music")
+                p_file = media.download_music(o["phonk_url"], d)
+                if p_file and p_file.is_file():
+                    best_part = media.find_music_best_part(p_file)
+                    _set(job, phonk_path=str(p_file.resolve()), phonk_start=best_part)
+                    break
+            except Exception as e:
+                if attempt == 2:
+                    notes.append(f"Phonk music download failed ({str(e)[:60]}), proceeding without it.")
+                time.sleep(1.5)
 
     vlock, vstate = threading.Lock(), {}
 

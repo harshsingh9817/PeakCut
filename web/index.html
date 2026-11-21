@@ -1371,6 +1371,19 @@ function drawAdd(variant) {
   const c = creator();
   $("#add").innerHTML = `<form class="composer ${variant === "hero" ? "big" : "compact"}" id="addform">
     <div class="composer-input">${ic("link")}<input id="url" placeholder="Paste a YouTube, Twitch or Kick video link" autocomplete="off" aria-label="Video link"></div>
+    <div class="composer-input phonk-row" style="border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:6px 14px">
+      <span style="font-size:15px;line-height:1;user-select:none" title="Pronk / Phonk Music">🎵</span>
+      <input id="phonk_url" placeholder="Pronk / Phonk music link (optional) - automatically starts at best beat drop" autocomplete="off" aria-label="Pronk music link" style="border:0;outline:none;background:transparent;width:100%;font-size:13px;color:inherit">
+      <div style="display:flex;align-items:center;gap:4px;flex:none">
+        <label for="o_music_vol" style="font-size:11px;color:var(--faint);white-space:nowrap">Music Volume:</label>
+        <select id="o_music_vol" style="font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--line);background:var(--frame-2,#fff);color:inherit;cursor:pointer">
+          <option value="0.05">Quiet (5%)</option>
+          <option value="0.10" selected>Low (10% - recommended)</option>
+          <option value="0.16">Medium (16%)</option>
+          <option value="0.22">High (22%)</option>
+        </select>
+      </div>
+    </div>
     <div class="att" id="att"><div><div class="att-in" id="attIn"></div></div></div>
     <div class="composer-bar">
       <button type="button" class="chip" data-act="pickfile">${ic("up")}Upload video</button>
@@ -1390,6 +1403,8 @@ function drawAdd(variant) {
         <input id="o_hook" maxlength="60" autocomplete="off" value="${esc(c?.hook_text || "")}" placeholder="Left empty, the AI writes a different one for each clip" aria-label="Big text on every clip"></label></div>
       <div class="ob wide"><label class="f"><span class="ot" style="margin:0">Description for every clip <span style="font-weight:400">(optional)</span></span>
         <textarea id="o_desc" rows="3" maxlength="2000" placeholder="Left empty, the AI writes a different one for each clip. Write it once here and it is the description of every clip, exactly as typed." aria-label="Description for every clip">${esc(c?.description_text || "")}</textarea></label></div>
+      <div class="ob wide"><label class="f"><span class="ot" style="margin:0">🎵 Pronk / Phonk music link <span style="font-weight:400">(optional)</span></span>
+        <input id="o_phonk" maxlength="500" autocomplete="off" placeholder="Paste a YouTube or audio link for Pronk / Phonk music to mix into clips" aria-label="Pronk music link"></label></div>
       <div class="ob"><div class="ot cap-head"><span id="o_style_label">Caption style</span>
         <label><input type="checkbox" id="o_captions" data-caption-toggle ${c?.captions === false ? "" : "checked"}>Generate captions</label></div>
         ${choice("o_style", Object.entries(S.status.styles).map(([k, v]) => ({v:k, label:v, prev:capPrev(k)})), c?.style ?? "bounce", c?.captions === false)}</div>
@@ -1475,7 +1490,9 @@ const targetCreator = () => creatorId() || $("#o_creator")?.value || "";
 function jobOptions() {
   const n = id => { const v = $(id).value; return v === "" ? null : Number(v); };
   const o = {max_clips:n("#o_max"), min_len:n("#o_min"), max_len:n("#o_maxlen"), captions:$("#o_captions").checked, style:$("#o_style").value, layout:$("#o_layout").value, quality:n("#o_quality"),
-    hook_text:$("#o_hook").value.trim(), description_text:$("#o_desc").value.trim(), lang:$("#o_lang")?.value || "en"};
+    hook_text:$("#o_hook").value.trim(), description_text:$("#o_desc").value.trim(), lang:$("#o_lang")?.value || "en",
+    phonk_url: ($("#o_phonk")?.value || $("#phonk_url")?.value || "").trim(),
+    music_volume: n("#o_music_vol") ?? 0.10};
   if (n("#o_from") !== null) o.range_start = n("#o_from") * 60;
   if (n("#o_to") !== null) o.range_end = n("#o_to") * 60;
   return o;
@@ -2305,6 +2322,13 @@ $("#file").addEventListener("change", e => { attach(e.target.files); e.target.va
 document.addEventListener("dragover", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.add("over"); } });
 document.addEventListener("dragleave", () => $(".composer")?.classList.remove("over"));
 document.addEventListener("drop", e => { const a = $(".composer"); if (a) { e.preventDefault(); a.classList.remove("over"); attach(e.dataTransfer.files); } });
+document.addEventListener("input", e => {
+  if (e.target.id === "phonk_url") {
+    const op = $("#o_phonk"); if (op && op.value !== e.target.value) op.value = e.target.value;
+  } else if (e.target.id === "o_phonk") {
+    const pu = $("#phonk_url"); if (pu && pu.value !== e.target.value) pu.value = e.target.value;
+  }
+});
 function syncCaptionStyle(toggle) {
   toggle.closest("#addform, #cform, #clipdlg").querySelectorAll("[data-caption-style]").forEach(i => i.disabled = !toggle.checked);
 }

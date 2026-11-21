@@ -282,7 +282,7 @@ _qsv_ok = None
 RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a frozen encoder is stopped, not waited on
 
 
-def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int) -> dict:
+def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int, music=None, music_start: float = 0.0, music_volume: float = 0.10) -> dict:
     """Writes <name>.mp4, <name>.jpg and <name>.ass into out_dir. Returns file names."""
     out_dir.mkdir(parents=True, exist_ok=True)
     start, end = clip["start"], clip["end"]
@@ -301,21 +301,43 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     try:
         # The title and description are also written into the file itself, for any place that reads them from it.
         meta = {"title": clip.get("title") or "", "description": clip.get("description") or "", "comment": clip.get("description") or ""}
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face, meta=meta)
+        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face, meta=meta, music=music, music_start=music_start, music_volume=music_volume)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None, meta=None) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None, meta=None, music=None, music_start: float = 0.0, music_volume: float = 0.10) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
-    fc = _filter(layout, fg_h, face) + f"[v0]ass={name}.ass:fontsdir=f[v]"
-    base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
-            "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
+    fc_video = _filter(layout, fg_h, face) + f"[v0]ass={name}.ass:fontsdir=f[v]"
+    music_p = Path(music).resolve() if music else None
+    if music_p and music_p.is_file():
+        local_music = work / f"bgm{music_p.suffix}"
+        try:
+            shutil.copyfile(music_p, local_music)
+            m_target = local_music.name
+        except OSError:
+            m_target = str(music_p)
+
+        vol = max(0.01, min(0.60, float(music_volume or 0.10)))
+        fc = (fc_video + ";" +
+              f"[1:a:0]volume={vol:.2f},aformat=sample_rates=48000:channel_layouts=stereo[bgm];" +
+              "[0:a:0]aformat=sample_rates=48000:channel_layouts=stereo[vox];" +
+              "[vox][bgm]amix=inputs=2:duration=first:dropout_transition=2,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+        
+        m_seek = ["-ss", f"{music_start:.2f}"] if music_start and music_start > 0 else []
+        base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src)] + \
+               m_seek + ["-stream_loop", "-1", "-i", m_target,
+               "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+               "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
+    else:
+        fc = fc_video
+        base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
+                "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
     for k, v in (meta or {}).items():
         if v:
             base += ["-metadata", f"{k}={v}"]
